@@ -1,5 +1,12 @@
 # Qin Kingdoms 2023
 
+# for android 
+#try:
+#    import pygame_sdl2
+#    pygame_sdl2.import_as_pygame()
+#except ImportError:
+#    print("sdl2 not working")
+
 """ TODOs:
 [x] 1. random map generator
 [x] 2. attach unit info to board (not maphex); allow movement
@@ -76,33 +83,55 @@
             experience is divided among all surviving generals of winning side, and is
             exp = (net troop loss / 10); or if a draw (sum troop loss/4) per army
 
-- computerAI        
+[x] 16. plot results of 120 battles
+        AI_level 3 options (player level difficulty)
+        Track AI test options for plots
+        have plotter show "test note" separately - works! And proves barricade improves def win rate 3X.
+[x] 17. computerAI: range, backup
+        I THINK I FIXED BUGS:
+        DEF heavy infantry 5/5 with 100 troops not attacking anybody, just sits on castle
+        despite being the biggest army. Does not attack adjacent either (lvl 4)
+        DEF (level 4) infantry and militia not attacking me (from castle)
+        DEF archers moved right next to my army instead of stopped 2 away
+        DEF 5/2 calv did not engage any troops (level 4)
+        FIX: if total friend army size is larger than enemy, AND
+        another friend army is nearby,
+        go ahead and engage the closest enemy (more aggressively):
+        because two or littler armies will beat one larger one. current DEF AI waits
+        if each army is weaker than the one invader.
+        made archers 2/2 instead of 2/3
+        ADDED: General's specialty adds +1 to attack, or if pikemen, +1 to defense, or if range, +1 range attack,
+        if unit type matches their specialty type
+        BUG -- battle_test: when armies are exactly even, nobody attacks
+        (not a problem with lvl 1 (brute force))
+
+BUG: I have one army left, but game keeps skipping it's move.
+BUG: Why does it spin wheels when army is captured. Next turn function seems to have a slow step?
+
+Add - if two foe armies nearby, move towards the weaker one
+(a genetic algo step; not always the best move, but leads to more strategies)
+Add - Pikemen: move between archer and army and barricade. (lvl5)
+
 - AI: hide behind army or with mountains between army and enemy
-- AI: range, backup
 - AI: if range and blocked, don't pass, move towards allied army instead
 
-- mouse/touch view mode
+
 - add fire
+- add loyalty (and switching)
+- add rice (lvl5 DEF)
+    - move towards rice, if rice unguarded
+- lvl 5: set fire, if outnumbered
+- lvl 6: move away from enemies, if outnumbered and more castles than can be occupied
+
 - add mouse and fingerdown/fingerup/fingermotion tablet support
-- improve enemy AI with all these attack options
-- [TAB] to change target 
+- range [TAB] to change target 
 - toggle tileset from retro NES to modern tiles to cartoonish tiles
 - captured generals: add to Player class for (main game state)
-- linear interpolation when scrolling
-? for large maps, use random seed terrain types and grow the pieces around them,
-instead of creating from top-left downward.
-- future: option to redeploy captured generals with 100 men on board (taken from army that defeated it)
+    - future: option to redeploy captured generals with 100 men on board (taken from army that defeated it)
     - add warning if loyalty is below 40
-
-AI combat moves
-- if militia/pikemen and there are archers or ballistas on own side; move next to them, between archers and nearest enemy unit.
-- default: defends castle; barricades
-- move towards enemy, if you are stronger
-- move towards rice, if rice unguarded
-- move away from enemies, if more castles than can be occupied
-- set fire, if outnumbered
-- harder: split to defend archers from enemy
-AI reward LOG: min losses, max enemy losses, +500 winning +100 for each captured general
+- linear interpolation when scrolling
+- ??? for large maps, use random seed terrain types and grow the pieces around them,
+- future, harder: split to defend archers from enemy
 """
 import math
 import time
@@ -247,19 +276,11 @@ def add_river_and_castles(board):
         if not board.get((xx,yy)):
             continue
         adjacent_tiles = [(xx, yy+1), (xx, yy-1), (xx-1, yy-1), (xx-1, yy+1), (xx+1,yy), (xx-1,yy), (xx+1,yy+1), (xx+1,yy-1)]
-        #adj_images = Counter()
         for adj in adjacent_tiles:
             if board.get(adj):
-                #adj_images[board[adj].image_key] += 1
                 if board[adj].image_key not in ('w','c'):
                     board[adj].image_key = 'p'
                     board[adj].image = images['p']
-                #print((xx,yy), '-->', adj)
-        #this = board[(xx,yy)].image_key
-        #[(ikey, ifreq)] = adj_images.most_common(1)
-        #if ikey != this and ifreq > 1:
-        #    board[(xx,yy)].image_key = ikey
-        #    print(f"DEBUG {this} --> {ikey} at {xx,yy}")
 
     # RIVER
     top_or_left = random.choice(['top','left'])
@@ -302,7 +323,7 @@ def add_river_and_castles(board):
 
 def create_armies(board):
     armies = [] # list of Army objects with Generals
-    army_spots = [(2,2), (0,1), (5,3)] # starting spots
+    army_spots = [(2,2), (0,1), (5,3), (3,4)] # starting spots
     enemy_spots = [(8,8), (9,9), (10,9), (8,9)] # these get moved to castles, if possible
     player_shield = random_shield()
     enemy_shield = random_shield()
@@ -328,7 +349,7 @@ def create_armies(board):
                     print(f"ERROR, could not move spot off {board[spot].image_key}")
                     break
         army = Army(spot[0], spot[1],
-                    type=random.randrange(0,7), owner=0,
+                    type=random.randrange(0,9), owner=0,
                     size=random.choice([1333, 2666, 2400, 3100, 5500, 7850, 10100]),
                     shield=player_shield)
         armies.append( army )
@@ -352,7 +373,7 @@ def create_armies(board):
                 break
         # TODO: check that enemy armies don't occupy same spots
         army = Army(spot[0], spot[1],
-                    type=random.randrange(0,7), owner=1,
+                    type=random.randrange(0,9), owner=1,
                     size=random.choice([4900, 2300, 1250, 10100]),
                     shield=enemy_shield)
         armies.append( army )
@@ -374,7 +395,7 @@ class Army(pygame.sprite.Sprite, General):
     }
     defenses = {
         0:1, 1:3, 2:5, 3:3,
-        4:3, 5:2, 6:1, 7:2, 8:3, 9:1, 11:5, 12:1,
+        4:2, 5:2, 6:1, 7:2, 8:3, 9:1, 11:5, 12:1,
     }
     range_attacks = {
         4:2, 6:4, 7:2, 8:4
@@ -398,7 +419,7 @@ class Army(pygame.sprite.Sprite, General):
         if not hasattr(self, 'moves'):
             self.moves = self.unit_moves[self.type]
         if not hasattr(self, 'owner'):
-            self.owner = 0 # human; 1+ = enemy
+            self.owner = 0 # human; 1 = enemy defender; 2 = enemy attacker
         if not hasattr(self, 'size'):
             self.size = 1000
         if not hasattr(self, 'shield'):
@@ -420,6 +441,9 @@ class Army(pygame.sprite.Sprite, General):
         """ must be dynamic, not attribute, & recalculated each time to remain in sync as a shorthand. """
         # spot is spot on viewport, not spot on grid?
         return (self.x, self.y)
+    def strength(self):
+        unit_pow = (self.attacks[self.type] + self.defenses[self.type])/2
+        return int( (self.gen.war/10) * unit_pow * (self.size/100) )
     def draw(self, shift_x=0, shift_y=0):
         self.rect = pygame.Rect(
             (self.x - shift_x) * self.tile,
@@ -499,6 +523,8 @@ class BoardState(ComputerAI, SideMenu):
         self.active_army = self.armies[self.a]
         self.active_spot = (0,0) # self.armies[self.a].spot() # start: location of first army; gets updated after create_armies
         self.cursor = ActiveCursor(*self.active_spot)
+        self.players_AI_level = {0:0, 1:1, 2:1}
+        self.DEBUG_every_army_moved = []
         for k,v in kwargs.items():
             setattr(self, k, v)
 
@@ -625,6 +651,10 @@ class BoardState(ComputerAI, SideMenu):
         elif action == 'R':
             if self.active_army.range_attack > 0:
                 self.range_attack()
+                self.next_army()
+                self.shift_map_pane()
+                self.cursor.update(self.active_spot, self.view_x_min, self.view_y_min)
+                return
             else:
                 self.menu_display("Not a ranged unit", ephemeral=True)
         elif action == 'B':
@@ -710,6 +740,9 @@ class BoardState(ComputerAI, SideMenu):
             return
         elif keys[pygame.K_r] and self.active_army.range_attack > 0:
             self.range_attack()
+            self.next_army()
+            self.shift_map_pane()
+            self.cursor.update(self.active_spot, self.view_x_min, self.view_y_min)            
             return
         elif keys[pygame.K_b]: # barricade
             if self.active_army.type == 3 and self.active_army.barricade_points < 2:
@@ -799,8 +832,11 @@ class BoardState(ComputerAI, SideMenu):
         else:            
             return False
     def next_army(self):
+        self.DEBUG_every_army_moved.append(f"{self.active_army.owner} {self.active_army.gen.name[:5]}")
         self.a += 1        
         if self.a > (len(self.armies)-1):
+            if len(self.DEBUG_every_army_moved) < len(self.armies):
+                print("DEBUG ERROR - not every army moved", self.DEBUG_every_army_moved)
             self.turn += 1
             self.menu_display(f'Next turn: {self.turn}', ephemeral=True, replace=True, wait=(0.5 *self.wait))
             self.a = 0            
@@ -870,7 +906,16 @@ class BoardState(ComputerAI, SideMenu):
     
     def attack(self, enemy):
         def_bonus = self.terrain_defense[self.terrain_spot(enemy.spot())]
-        army_ratio = self.active_army.attack / (enemy.defense + enemy.barricade_points)
+        # specialty adds +1 to attack, or if pikemen, +1 to defense, or if range, +1 range attack
+        if self.active_army.gen.specialty == self.active_army.type and self.active_army.type in (0,1,2,5):
+            spec_bonus = 1
+        else:
+            spec_bonus = 0
+        if enemy.gen.specialty == enemy.type and enemy.type == 3:
+            spec_def_bonus = 1 # pikemen get +1 def
+        else:
+            spec_def_bonus = 0
+        army_ratio = (self.active_army.attack + spec_bonus) / (enemy.defense + enemy.barricade_points + spec_def_bonus)
         war_ratio = (self.active_army.gen.war/enemy.gen.war)
         old_war_ratio = war_ratio
         if war_ratio > 1:
@@ -881,6 +926,7 @@ class BoardState(ComputerAI, SideMenu):
         #print(f'calc: {war_ratio} * {def_bonus} * {army_ratio}')        
         # IF SMALL ARMY, reduce total deaths        
         enemy_defense = 1/player_attack * def_bonus
+
         total_loss = 1000 if self.active_army.gen.war > 50 else (600 + (self.active_army.gen.war/100)*400)
         if enemy.size < 1000:
             total_loss = (0.25*total_loss + (total_loss * (enemy.size/1200)))
@@ -995,6 +1041,7 @@ class BoardState(ComputerAI, SideMenu):
                 clock.tick(30)
         """
         self.draw_map()
+        
     def is_adjacent(self, other_spot, this_spot=None):
         # active_army or this_spot -- adjacent returns True/False; accounts for even-odd X-columns
         if not this_spot:
@@ -1159,7 +1206,6 @@ class BoardState(ComputerAI, SideMenu):
         # highlight first enemy army
         for army in self.armies:
             if army.owner != self.active_army.owner and army.spot() in targets:
-                #print(f"DEBUG target at {army.spot()}")
                 this = self.board[army.spot()]
                 rect = pygame.Rect(
                     self.edge + this.pixelx - (self.tile * self.view_x_min),
@@ -1176,7 +1222,8 @@ class BoardState(ComputerAI, SideMenu):
             self.menu_display("No enemies in range.","Yellow")
             self.clock.tick(1 * self.wait)
             return
-        # TAB to rotate through targets
+
+        # FUTURE TODO: TAB to rotate through targets
         # only highlight spots where an enemy army is found; skip empty ones.
         def rotate_target(current_spot): ### TODO FIX - not working yet ###
             if current_spot +2 > len(spots):
@@ -1217,7 +1264,9 @@ class BoardState(ComputerAI, SideMenu):
         # add FOREST RANGE DEFENSE BONUS
         if self.board[enemy.spot()].image_key == 'f':
             def_bonus = 1.25
-        army_ratio = self.active_army.range_attack / (enemy.defense + enemy.barricade_points)
+        gen_spec_bonus = (1 if (self.active_army.gen.specialty in (4,6,7,8) and
+                                self.active_army.gen.specialty == self.active_army.type) else 0)
+        army_ratio = (self.active_army.range_attack + gen_spec_bonus) / (enemy.defense + enemy.barricade_points)
         war_ratio = (self.active_army.gen.war/enemy.gen.war)
         if war_ratio > 1:
             war_ratio = war_ratio/(math.sqrt(war_ratio)) # approx divides by max 3
@@ -1261,9 +1310,6 @@ class BoardState(ComputerAI, SideMenu):
             self.clock.tick(0.5 * self.wait)
         self.draw_map() # remove target spots
         pygame.display.flip()
-        self.next_army()
-        self.shift_map_pane()
-        self.cursor.update(self.active_spot, self.view_x_min, self.view_y_min)
 
     def all_castles_occupied(self):
         castle_spots = [spot for spot in self.board if self.board[spot].image_key == 'c']
@@ -1327,7 +1373,7 @@ def game_loop(bs):
             bs.shift_map_pane()
             bs.clock.tick(2 * bs.wait)
             bs.AI_choose_action()
-            bs.AI_move()
+            #bs.AI_move()
             bs.next_army()
             bs.cursor.update(bs.active_spot, bs.view_x_min, bs.view_y_min)
             if bs.game_end:
@@ -1341,6 +1387,7 @@ def game_loop(bs):
 if __name__ == "__main__":
     # for battle_test_AI.py, need to pass in armies and board state
     bs = BoardState() # makes board; adds default armies
+    bs.players_AI_level = {0:0, 1:4, 2:1}
     bs.armies = create_armies(bs.board)    
     game_loop(bs)
     pygame.quit() # only quits if run outside of battle_test_AI or outside full game
